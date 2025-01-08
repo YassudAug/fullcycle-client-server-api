@@ -16,31 +16,30 @@ import (
 //O client.go precisará receber do server.go apenas o valor atual do câmbio (campo "bid" do JSON).
 // o client.go terá um timeout máximo de 300ms para receber o resultado do server.go.
 
-func requestDollarPriceBRL() {
+func RequestDollarPriceBRL() {
 	var bid string
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, "GET", "http://localhost:8080/cotacao", nil)
 	if err != nil {
 		panic(err)
 	}
-
-	// res, err := http.DefaultClient.Do(req)
-	// if err != nil {
-	// 	panic(err)
-	// }
 	defer req.Body.Close()
-	// io.Copy(os.Stdout, res.Body)
+
 	res, err := io.ReadAll(req.Body)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed reading response: %v", err)
 		return
 	}
+
 	err = json.Unmarshal(res, bid)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed parsing response: %v", err)
 		return
 	}
+
+	saveDollarValueToFile(bid)
 }
 
 func saveDollarValueToFile(cotacao string) error {
