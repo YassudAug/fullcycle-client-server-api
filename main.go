@@ -1,5 +1,15 @@
 package main
 
+import (
+	"time"
+
+	"github.com/YassudAug/fullcycle-client-server-api/client"
+	"github.com/YassudAug/fullcycle-client-server-api/server"
+)
+
 func main() {
-	server.Handler()
+	go server.Handler()
+
+	time.Sleep(1 * time.Second)
+	client.RequestDollarPriceBRL()
 }

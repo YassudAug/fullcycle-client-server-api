@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3" // Import the sqlite3 driver
 )
 
 type Currency struct {
@@ -27,8 +29,9 @@ type Currency struct {
 }
 
 func Handler() {
-	http.ListenAndServe(":8080", nil)
+	fmt.Printf("Server is up and running!\n")
 	http.HandleFunc("/cotacao", GetDollarBidHandler)
+	http.ListenAndServe(":8080", nil)
 }
 
 func GetDollarBidHandler(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +51,7 @@ func GetDollarBidHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(bid)
@@ -60,26 +64,45 @@ func getCurrency(startingCurrency string, convCurrency string) (*Currency, error
 
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://economia.awesomeapi.com.br/json/last/"+startingCurrency+"-"+convCurrency, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed getting currency: %v", err)
-		return nil, err
-	}
-	defer req.Body.Close()
-
-	res, err := io.ReadAll(req.Body)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed reading response: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed getting currency: %v\n", err)
 		return nil, err
 	}
 
-	err = json.Unmarshal(res, &currency)
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed parsing response: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed to make the request: %v\n", err)
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	resp, err := io.ReadAll(res.Body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed reading response: %v\n", err)
+		return nil, err
+	}
+
+	var result map[string]json.RawMessage
+	err = json.Unmarshal(resp, &result)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed parsing response into map: %v\n", err)
+		return nil, err
+	}
+
+	currencyData, ok := result["USDBRL"]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Currency data not found in response")
+		return nil, fmt.Errorf("currency data not found in response")
+	}
+
+	err = json.Unmarshal(currencyData, &currency)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed parsing currency data: %v\n", err)
 		return nil, err
 	}
 
 	err = saveCurrencyToDB(&currency)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving currency to db: %v", err)
+		fmt.Fprintf(os.Stderr, "Error saving currency to db: %v\n", err)
 		return nil, err
 	}
 
@@ -102,12 +125,12 @@ func saveCurrencyToDB(currency *Currency) error {
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-
 	insertQuery := `
     INSERT INTO currency (code, codein, name, high, low, varBid, pctChange, bid, ask, timestamp, create_date)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
 
 	_, err = db.ExecContext(ctx, insertQuery, currency.Code, currency.Codein, currency.Name, currency.High, currency.Low, currency.VarBid, currency.PctChange, currency.Bid, currency.Ask, currency.Timestamp, currency.CreateDate)
 	if err != nil {
@@ -121,6 +144,7 @@ func saveCurrencyToDB(currency *Currency) error {
 func initDB() (*sql.DB, error) {
 	db, err := sql.Open("sqlite3", "./currency.db")
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open db. ", err)
 		return nil, err
 	}
 
@@ -142,6 +166,7 @@ func initDB() (*sql.DB, error) {
 
 	_, err = db.Exec(createTableQuery)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to exec db. : %v\n", err)
 		return nil, err
 	}
 
